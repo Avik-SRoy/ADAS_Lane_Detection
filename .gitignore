@@ -1,4 +1,7 @@
 venv/
+LaneDet/
 __pycache__/
 *.pyc
+Output/
 outputs/
+*.csv

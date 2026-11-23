@@ -1,0 +1,83 @@
+{
+  "video": {
+    "input_path": "Data/Sample.mp4",
+    "output_path": "Output/annotated_lanes.mp4",
+    "width": 960,
+    "height": 540
+  },
+  "preprocessing": {
+    "white_hls_l_min": 185,
+    "white_hls_s_max": 70,
+    "yellow_hsv_h_min": 8,
+    "yellow_hsv_h_max": 35,
+    "yellow_hsv_s_min": 75,
+    "yellow_hsv_v_min": 100,
+    "sobel_kernel": 3,
+    "sobel_x_min": 25,
+    "sobel_x_max": 180
+  },
+  "perspective": {
+    "src_points_norm": [
+      [
+        0.44,
+        0.66
+      ],
+      [
+        0.60,
+        0.66
+      ],
+      [
+        0.77,
+        0.96
+      ],
+      [
+        0.10,
+        0.96
+      ]
+    ],
+    "dst_points_norm": [
+      [
+        0.24,
+        0.0
+      ],
+      [
+        0.76,
+        0.0
+      ],
+      [
+        0.76,
+        1.0
+      ],
+      [
+        0.24,
+        1.0
+      ]
+    ]
+  },
+  "detection": {
+    "n_windows": 9,
+    "margin": 60,
+    "minpix": 40,
+    "min_total_pixels": 250,
+    "min_lane_width_px": 280,
+    "max_lane_width_px": 620,
+    "max_slope_diff": 0.45
+  },
+  "tracker": {
+    "process_noise": 4e-4,
+    "measurement_noise": 1e-2,
+    "max_missed_frames": 15
+  },
+  "metrics": {
+    "lane_width_m": 3.5,
+    "ym_per_pix": 0.045,
+    "xm_per_pix": 0.0067
+  },
+  "control": {
+    "ldw_threshold_m": 0.45,
+    "kp_lateral": 18.0,
+    "kp_heading": 25.0,
+    "max_steer_deg": 25.0,
+    "straight_deadband_deg": 2.0
+  }
+}
