@@ -1,0 +1,146 @@
+================================================================================
+SOFTWARE REQUIREMENTS SPECIFICATION (SRS)
+Project : ADAS Lane Perception & Lateral Control System (Lane Det)
+Version : 1.0 (Phase 1 Baseline)
+Date    : 2026-11-24
+================================================================================
+
+1. PURPOSE & SCOPE
+------------------
+This document specifies the functional, performance, interface, and safety
+requirements for the monocular vision-based Advanced Driver Assistance System
+(ADAS) Lane Perception and Lateral Control software.
+
+The system processes forward-facing road video to:
+  - Detect curved and straight ego-lane boundaries in real time.
+  - Track lane geometry temporally across frames and brief occlusions.
+  - Estimate metric vehicle lateral offset and road radius of curvature.
+  - Compute continuous lateral steering commands and Lane Departure Warning
+    (LDW) states.
+  - Render an automotive Heads-Up Display (HUD) and export structured telemetry.
+
+2. OPERATIONAL DESIGN DOMAIN (ODD)
+----------------------------------
+The Phase 1 classical computer-vision pipeline is designed to operate within
+the following ODD boundaries:
+  - Road Type      : Paved highways and rural/urban two-lane roads with
+                     visible painted white and/or yellow/orange lane markings.
+  - Lighting       : Daytime and overcast conditions without severe lens flare
+                     or total darkness.
+  - Weather        : Dry or lightly damp roads without heavy rain, dense fog,
+                     or snow-covered lane markings.
+  - Camera Mount   : Fixed forward-facing monocular camera mounted near vehicle
+                     centerline; perspective trapezoid calibrated in config.json.
+  - Nominal Width  : Standard lane width ~3.0 m to 4.0 m (nominal 3.5 m).
+
+Conditions outside this ODD (night, heavy rain, faded/missing markings,
+intersections) are handled via confidence decay and graceful fallback to
+STANDBY, and are targeted for Phase 2 deep-learning perception upgrades.
+
+3. SYSTEM ARCHITECTURE & PIPELINE
+---------------------------------
+  [Video / Camera Input]
+          |
+          v
+  [1. Preprocessing]        HLS white + HSV yellow/orange + Sobel-X binary mask
+          |
+          v
+  [2. IPM / BEV Warp]       Homography projection to Bird's-Eye View
+          |
+          v
+  [3. Polynomial Detector]  Sliding-window / search-around-poly 2nd-order fit
+          |
+          v
+  [4. Kalman Lane Tracker]  3-state per-lane polynomial Kalman filter
+          |
+          v
+  [5. Lateral Controller]   Metric offset, curvature, PD steering & LDW FSM
+          |
+          v
+  [6. HUD / Export / CSV]   Unwarped corridor overlay, HUD, MP4 & telemetry log
+
+4. FUNCTIONAL REQUIREMENTS
+--------------------------
+FR-01  Configuration Management
+       All tunable perception, perspective, tracker, metric, and control
+       parameters SHALL be externalized in a JSON configuration file
+       (config.json) rather than hardcoded in source modules.
+
+FR-02  Illumination-Robust Feature Extraction
+       The preprocessing module SHALL isolate both white (HLS) and yellow/orange
+       (HSV) lane markings combined with directional Sobel-X gradient filtering
+       and morphological noise removal.
+
+FR-03  Inverse Perspective Mapping (BEV)
+       The ROI module SHALL transform camera-view frames into a top-down
+       Bird's-Eye View using normalized source/destination coordinates and
+       provide an exact inverse warp back to camera perspective.
+
+FR-04  Curved Lane Polynomial Fitting
+       The detector SHALL fit 2nd-order polynomials x = a*y^2 + b*y + c for
+       left and right ego-lane boundaries using:
+         - Histogram + sliding-window search on cold start / lost track.
+         - Search-around-polynomial band on warm tracked frames.
+       Detections SHALL be validated against minimum pixel count, lane width
+       bounds, and left/right slope parallelism.
+
+FR-05  Temporal Tracking & Occlusion Handling
+       The tracker SHALL smooth polynomial coefficients using a per-lane Kalman
+       filter whose measurement noise scales inversely with detection confidence.
+       When a lane measurement is missing, the tracker SHALL coast on its prior
+       estimate while decaying confidence, and reset the track after
+       `max_missed_frames` consecutive misses.
+
+FR-06  Metric Geometry & Lateral Control
+       The controller SHALL compute:
+         - Vehicle lateral offset from lane center (meters).
+         - Road radius of curvature (meters).
+         - Continuous steering command (degrees), clamped to [-max_steer_deg,
+           +max_steer_deg], from proportional lateral offset and heading error.
+
+FR-07  ADAS State Machine (LDW / LKA / STANDBY)
+       The system SHALL output one of four states per frame:
+         - STANDBY    : Tracking confidence < 0.25 or either lane unavailable.
+         - LKA ACTIVE : Tracked with |lateral_offset| <= ldw_threshold_m.
+         - LDW LEFT   : Tracked with lateral_offset < -ldw_threshold_m.
+         - LDW RIGHT  : Tracked with lateral_offset > +ldw_threshold_m.
+
+FR-08  Visualization, Video Export & Telemetry
+       The system SHALL support:
+         - Live display window with unwarped lane corridor, HUD, and BEV inset.
+         - Headless execution (--no-display) for automated/batch runs.
+         - MP4 video export (--save-video / --output).
+         - Per-frame CSV telemetry logging (--telemetry).
+
+5. NON-FUNCTIONAL REQUIREMENTS
+------------------------------
+NFR-01 Real-Time Performance
+       Average end-to-end processing latency at 960x540 resolution SHALL NOT
+       exceed 40 ms/frame (>= 25 FPS) on standard desktop CPU hardware.
+       (Verified baseline on Data/Sample.mp4: 30.5 ms avg / 32.8 FPS.)
+
+NFR-02 Portability
+       All file paths SHALL resolve relative to the application root or accept
+       explicit CLI overrides; no OS-specific path assumptions.
+
+NFR-03 Testability
+       Core geometry, detection, Kalman tracking, and control logic SHALL be
+       covered by automated unit tests runnable headlessly without GUI access.
+
+6. FAILURE MODES & GRACEFUL DEGRADATION (SOTIF-INSPIRED)
+--------------------------------------------------------
+  - Missing/occluded single lane : Coast via Kalman prior with decaying
+    confidence; reset after `max_missed_frames`.
+  - Implausible lane width/slope : Reject lower-confidence boundary to prevent
+    corridor collapse or false guardrail lock-on.
+  - Low tracking confidence      : Transition to STANDBY, zero steering output
+    (0.0 deg), and display "Lane Lost" on HUD rather than issuing erratic
+    steering commands.
+
+7. VERIFICATION & ACCEPTANCE CRITERIA
+-------------------------------------
+  - Unit tests (`python -m unittest discover -s tests -v`) pass 100%.
+  - End-to-end headless run on `Data/Sample.mp4` achieves >= 95% tracked frames
+    and >= 25 FPS average throughput.
+  - Telemetry CSV exports without missing/corrupted rows and generates a valid
+    summary report via `scripts/analyze_telemetry.py`.
