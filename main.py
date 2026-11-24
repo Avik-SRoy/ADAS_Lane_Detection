@@ -1,15 +1,17 @@
 import argparse
 import csv
 import json
-import os
 import time
 from pathlib import Path
 
 import cv2
 
 from Utils.control import LateralController
-from Utils.draw import render_hud, render_lane_overlay
+from Utils.draw import render_hud, render_lane_overlay, render_objects
+from Utils.fcw import ForwardCollisionWarning
 from Utils.lane_det import PolynomialLaneDetector
+from Utils.object_det import ObjectDetector
+from Utils.object_tracker import ObjectTracker
 from Utils.preprocess import extract_lane_binary
 from Utils.roi import PerspectiveTransformer
 from Utils.smoothing import KalmanLaneTracker
@@ -30,7 +32,7 @@ def resolve_path(path_str: str) -> Path:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="ADAS Phase 1 Lane Perception & Lateral Control Pipeline"
+        description="ADAS Lane Perception, YOLOv8 Object Detection & FCW Pipeline"
     )
     parser.add_argument(
         "--config",
@@ -50,6 +52,11 @@ def parse_args():
         type=str,
         default=None,
         help="Optional path to write per-frame CSV telemetry",
+    )
+    parser.add_argument(
+        "--disable-objects",
+        action="store_true",
+        help="Disable YOLOv8 object detection and FCW (lane-only mode)",
     )
     parser.add_argument(
         "--no-display",
@@ -74,6 +81,8 @@ def main():
         raise FileNotFoundError(f"Cannot open video: {input_path}")
 
     source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    frame_dt = 1.0 / source_fps
+
     writer = None
     if args.save_video or args.output is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,7 +98,9 @@ def main():
         telemetry_writer = csv.writer(telemetry_file)
         telemetry_writer.writerow([
             "frame", "method", "state", "confidence",
-            "offset_m", "curvature_m", "steering_deg", "command", "latency_ms",
+            "offset_m", "curvature_m", "steering_deg", "command",
+            "object_count", "fcw_state", "lead_distance_m", "lead_ttc_s",
+            "latency_ms",
         ])
 
     transformer = PerspectiveTransformer(
@@ -102,14 +113,33 @@ def main():
     tracker = KalmanLaneTracker(cfg["tracker"])
     controller = LateralController(cfg["metrics"], cfg["control"])
 
+    obj_cfg = cfg.get("objects", {})
+    objects_enabled = (not args.disable_objects) and bool(obj_cfg.get("enabled", True))
+    obj_detector = None
+    obj_tracker = None
+    fcw = None
+    detect_every_n = max(1, int(obj_cfg.get("detect_every_n_frames", 1)))
+
+    if objects_enabled:
+        obj_detector = ObjectDetector(obj_cfg, base_dir=BASE_DIR)
+        obj_tracker = ObjectTracker(
+            iou_threshold=obj_cfg.get("tracker_iou_threshold", 0.25),
+            max_age=obj_cfg.get("tracker_max_age", 10),
+        )
+        fcw = ForwardCollisionWarning(cfg["fcw"])
+
     frame_idx = 0
     active_frames = 0
     ldw_frames = 0
+    fcw_warn_frames = 0
+    fcw_caution_frames = 0
+    total_objects_seen = 0
     latencies_ms = []
     smoothed_fps = source_fps
 
     prev_left = None
     prev_right = None
+    last_raw_dets = []
 
     try:
         while True:
@@ -139,10 +169,27 @@ def main():
                 width, height, prev_left, prev_right, tracked["confidence"]
             )
 
-            # 6. Render curved corridor + ADAS HUD + mini BEV inset
+            # 6. YOLOv8 object detection, tracking & Forward Collision Warning
+            fcw_out = None
+            if objects_enabled:
+                if frame_idx % detect_every_n == 0:
+                    last_raw_dets = obj_detector.detect(frame)
+                tracked_objs = obj_tracker.update(last_raw_dets)
+                fcw_out = fcw.evaluate(
+                    tracked_objs, transformer, prev_left, prev_right, width, height, frame_dt
+                )
+                total_objects_seen += len(tracked_objs)
+                if fcw_out["state"] == "FCW WARNING":
+                    fcw_warn_frames += 1
+                elif fcw_out["state"] == "CAUTION":
+                    fcw_caution_frames += 1
+
+            # 7. Render curved corridor + object boxes + ADAS HUD + mini BEV inset
             lane_frame, bev_overlay = render_lane_overlay(
                 frame, transformer, prev_left, prev_right, ctrl["state"]
             )
+            if fcw_out is not None:
+                lane_frame = render_objects(lane_frame, fcw_out)
 
             dt = max(time.perf_counter() - t0, 1e-6)
             latency_ms = dt * 1000.0
@@ -156,6 +203,7 @@ def main():
                 smoothed_fps,
                 bev_binary=bev_binary,
                 bev_overlay=bev_overlay,
+                fcw_out=fcw_out,
             )
 
             if ctrl["state"] == "LKA ACTIVE":
@@ -176,11 +224,15 @@ def main():
                     "" if ctrl["curvature_m"] is None else f"{ctrl['curvature_m']:.1f}",
                     f"{ctrl['steering_deg']:.2f}",
                     ctrl["command"],
+                    0 if fcw_out is None else len(fcw_out["objects"]),
+                    "DISABLED" if fcw_out is None else fcw_out["state"],
+                    "" if (fcw_out is None or fcw_out["lead_distance_m"] is None) else f"{fcw_out['lead_distance_m']:.2f}",
+                    "" if (fcw_out is None or fcw_out["lead_ttc_s"] is None) else f"{fcw_out['lead_ttc_s']:.2f}",
                     f"{latency_ms:.2f}",
                 ])
 
             if not args.no_display:
-                cv2.imshow("ADAS Lane Perception & Control", hud_frame)
+                cv2.imshow("ADAS Lane Perception & FCW", hud_frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
@@ -198,9 +250,14 @@ def main():
         avg_ms = sum(latencies_ms) / len(latencies_ms)
         avg_fps = 1000.0 / avg_ms if avg_ms > 0 else 0.0
         track_rate = 100.0 * (active_frames + ldw_frames) / frame_idx
+        fcw_summary = (
+            f" | FCW(warn={fcw_warn_frames}, caution={fcw_caution_frames}, avg_objs={total_objects_seen / frame_idx:.2f})"
+            if objects_enabled
+            else " | Objects: disabled"
+        )
         print(
             f"Processed {frame_idx} frames | Tracked: {track_rate:.1f}% "
-            f"(LKA: {active_frames}, LDW: {ldw_frames}) | "
+            f"(LKA: {active_frames}, LDW: {ldw_frames}){fcw_summary} | "
             f"Avg latency: {avg_ms:.1f} ms ({avg_fps:.1f} FPS)"
         )
         if args.save_video or args.output is not None:

@@ -79,5 +79,33 @@
     "kp_heading": 25.0,
     "max_steer_deg": 25.0,
     "straight_deadband_deg": 2.0
+  },
+  "objects": {
+    "enabled": true,
+    "model_path": "Models/yolov8n.pt",
+    "conf_threshold": 0.35,
+    "iou_threshold": 0.45,
+    "imgsz": 640,
+    "detect_every_n_frames": 1,
+    "target_classes": [0, 1, 2, 3, 5, 7],
+    "tracker_iou_threshold": 0.25,
+    "tracker_max_age": 10
+  },
+  "fcw": {
+    "focal_length_px": 720.0,
+    "known_heights_m": {
+      "person": 1.7,
+      "bicycle": 1.1,
+      "car": 1.5,
+      "motorcycle": 1.2,
+      "bus": 3.1,
+      "truck": 2.9
+    },
+    "ego_lane_margin_px": 35.0,
+    "caution_distance_m": 25.0,
+    "warning_distance_m": 12.0,
+    "caution_ttc_s": 4.0,
+    "warning_ttc_s": 2.2,
+    "min_closing_speed_mps": 0.5
   }
 }

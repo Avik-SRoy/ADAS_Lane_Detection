@@ -6,7 +6,9 @@ import cv2
 import numpy as np
 
 from Utils.control import LateralController
+from Utils.fcw import ForwardCollisionWarning
 from Utils.lane_det import PolynomialLaneDetector
+from Utils.object_tracker import ObjectTracker, compute_iou
 from Utils.roi import PerspectiveTransformer
 from Utils.smoothing import KalmanLaneTracker
 
@@ -182,6 +184,79 @@ class TestLateralController(unittest.TestCase):
         self.assertEqual(out["state"], "STANDBY")
         self.assertEqual(out["command"], "Lane Lost")
         self.assertEqual(out["steering_deg"], 0.0)
+
+
+class TestObjectTrackerAndFCW(unittest.TestCase):
+    def setUp(self):
+        self.w = 960
+        self.h = 540
+        self.tf = PerspectiveTransformer(
+            self.w,
+            self.h,
+            CONFIG["perspective"]["src_points_norm"],
+            CONFIG["perspective"]["dst_points_norm"],
+        )
+        self.fcw = ForwardCollisionWarning(CONFIG["fcw"])
+
+    def test_tracker_persists_ids_and_expires(self):
+        tracker = ObjectTracker(iou_threshold=0.3, max_age=2)
+        det1 = [{"bbox": [400, 300, 500, 380], "class_id": 2, "class_name": "car", "confidence": 0.9}]
+        tracks1 = tracker.update(det1)
+        self.assertEqual(len(tracks1), 1)
+        tid = tracks1[0]["track_id"]
+
+        # Slight motion keeps same track ID
+        det2 = [{"bbox": [405, 302, 505, 382], "class_id": 2, "class_name": "car", "confidence": 0.92}]
+        tracks2 = tracker.update(det2)
+        self.assertEqual(tracks2[0]["track_id"], tid)
+
+        # Expire after max_age + 1 missed frames
+        for _ in range(3):
+            tracker.update([])
+        tracks3 = tracker.update(det1)
+        self.assertNotEqual(tracks3[0]["track_id"], tid)
+
+    def test_fcw_ego_lane_and_warning_states(self):
+        # Straight ego lane in BEV around [240, 720]
+        left_fit = np.array([0.0, 0.0, 240.0])
+        right_fit = np.array([0.0, 0.0, 720.0])
+
+        # Project BEV center (480, 300) back to camera space to place a close car in ego lane
+        pt_bev = np.array([480.0, 300.0, 1.0])
+        cam = self.tf.Minv @ pt_bev
+        cx, y2 = cam[0] / cam[2], cam[1] / cam[2]
+
+        # Car height = 100 px => dist = 1.5 * 720 / 100 = 10.8 m (<= 12 m => FCW WARNING)
+        tracker = ObjectTracker()
+        close_car = [{
+            "bbox": [cx - 50, y2 - 100, cx + 50, y2],
+            "class_id": 2,
+            "class_name": "car",
+            "confidence": 0.9,
+        }]
+        tracked = tracker.update(close_car)
+        res = self.fcw.evaluate(tracked, self.tf, left_fit, right_fit, self.w, self.h, dt=0.033)
+        self.assertEqual(res["state"], "FCW WARNING")
+        self.assertIsNotNone(res["lead_object"])
+        self.assertTrue(res["lead_object"]["in_ego_lane"])
+        self.assertLessEqual(res["lead_distance_m"], 12.0)
+
+        # Far right oncoming car outside ego lane => CLEAR
+        tracker2 = ObjectTracker()
+        oncoming_car = [{
+            "bbox": [820, 340, 920, 440],
+            "class_id": 2,
+            "class_name": "car",
+            "confidence": 0.85,
+        }]
+        tracked2 = tracker2.update(oncoming_car)
+        res2 = self.fcw.evaluate(tracked2, self.tf, left_fit, right_fit, self.w, self.h, dt=0.033)
+        self.assertEqual(res2["state"], "CLEAR")
+        self.assertIsNone(res2["lead_object"])
+
+    def test_iou_bounds(self):
+        self.assertAlmostEqual(compute_iou([0, 0, 10, 10], [0, 0, 10, 10]), 1.0)
+        self.assertAlmostEqual(compute_iou([0, 0, 10, 10], [20, 20, 30, 30]), 0.0)
 
 
 if __name__ == "__main__":

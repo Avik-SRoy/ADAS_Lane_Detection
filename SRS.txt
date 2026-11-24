@@ -1,8 +1,8 @@
 ================================================================================
 SOFTWARE REQUIREMENTS SPECIFICATION (SRS)
-Project : ADAS Lane Perception & Lateral Control System (Lane Det)
-Version : 1.0 (Phase 1 Baseline)
-Date    : 2026-11-24
+Project : ADAS Lane Perception, Object Detection & FCW System (Lane Det)
+Version : 2.0 (Phase 2: YOLOv8 + Forward Collision Warning)
+Date    : 2026-11-25
 ================================================================================
 
 1. PURPOSE & SCOPE
@@ -107,10 +107,23 @@ FR-07  ADAS State Machine (LDW / LKA / STANDBY)
 
 FR-08  Visualization, Video Export & Telemetry
        The system SHALL support:
-         - Live display window with unwarped lane corridor, HUD, and BEV inset.
-         - Headless execution (--no-display) for automated/batch runs.
+         - Live display window with unwarped lane corridor, object boxes, HUD,
+           and BEV inset.
+         - Headless execution (--no-display) and lane-only mode
+           (--disable-objects).
          - MP4 video export (--save-video / --output).
          - Per-frame CSV telemetry logging (--telemetry).
+
+FR-09  Real-Time Road Object Detection & Multi-Object Tracking
+       The system SHALL detect road participants (person, bicycle, car,
+       motorcycle, bus, truck) using Ultralytics YOLOv8 and maintain persistent
+       Track IDs with smoothed bounding boxes across frames.
+
+FR-10  Ego-Lane Filtering, Distance/TTC & Forward Collision Warning (FCW)
+       The system SHALL project detected object ground contact points into BEV
+       to classify ego-lane vs. adjacent/oncoming objects, estimate pinhole
+       longitudinal distance (m) and Time-to-Collision (s), and output FCW
+       states: CLEAR, CAUTION, or FCW WARNING.
 
 5. NON-FUNCTIONAL REQUIREMENTS
 ------------------------------

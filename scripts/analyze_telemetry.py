@@ -24,6 +24,10 @@ def load_telemetry(csv_path: Path):
                 "curvature_m": float(row["curvature_m"]) if row["curvature_m"] else np.nan,
                 "steering_deg": float(row["steering_deg"]),
                 "command": row["command"],
+                "object_count": int(row["object_count"]) if row.get("object_count") else 0,
+                "fcw_state": row.get("fcw_state", "DISABLED"),
+                "lead_distance_m": float(row["lead_distance_m"]) if row.get("lead_distance_m") else np.nan,
+                "lead_ttc_s": float(row["lead_ttc_s"]) if row.get("lead_ttc_s") else np.nan,
                 "latency_ms": float(row["latency_ms"]),
             })
     return rows
@@ -150,6 +154,14 @@ def main():
     print(f"Lateral Offset : mean={np.nanmean(offsets):+.3f} m, std={np.nanstd(offsets):.3f} m, max|off|={np.nanmax(np.abs(offsets)):.3f} m")
     print(f"Steering (deg) : mean={np.mean(steers):+.2f}, max|steer|={np.max(np.abs(steers)):.2f}")
     print(f"Curvature (m)  : min={np.nanmin(curvs):.0f} m, median={np.nanmedian(curvs):.0f} m")
+
+    fcw_states = Counter(r["fcw_state"] for r in rows)
+    if set(fcw_states.keys()) != {"DISABLED"}:
+        lead_dists = np.array([r["lead_distance_m"] for r in rows], dtype=np.float64)
+        obj_counts = np.array([r["object_count"] for r in rows], dtype=np.float64)
+        valid_dists = lead_dists[~np.isnan(lead_dists)]
+        dist_str = f"min={np.min(valid_dists):.1f} m, median={np.median(valid_dists):.1f} m" if len(valid_dists) else "no ego lead"
+        print(f"FCW States     : {dict(fcw_states)} | avg_objs={np.mean(obj_counts):.2f} | Lead dist: {dist_str}")
 
     render_telemetry_chart(rows, plot_path)
     print(f"Saved chart to : {plot_path}")

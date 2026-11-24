@@ -5,3 +5,6 @@ __pycache__/
 Output/
 outputs/
 *.csv
+Models/*.pt
+Models/*.onnx
+yolov8*.pt

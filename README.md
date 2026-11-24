@@ -24,7 +24,9 @@ flowchart LR
 * **Curved-Lane Polynomial Detection (`Utils/lane_det.py`):** 2nd-order polynomial fitting ($x = ay^2 + by + c$) with sliding-window cold start, fast search-around-poly warm tracking, and lane-width / slope-parallelism outlier rejection.
 * **Kalman Filter Tracking (`Utils/smoothing.py`):** Per-lane 3-state Kalman filter with confidence-weighted measurement noise, occlusion coasting, and automatic track reset.
 * **Metric Lateral Control & LDW (`Utils/control.py`):** Self-calibrated meters-per-pixel lateral offset, road radius of curvature (m), continuous steering angle (deg), and ADAS state machine (`LKA ACTIVE`, `LDW LEFT`, `LDW RIGHT`, `STANDBY`).
-* **Automotive HUD & Telemetry (`Utils/draw.py`, `main.py`):** Unwarped drivable corridor, top-left telemetry panel, live top-right Bird's-Eye View inset, MP4 export, and per-frame CSV logging.
+* **YOLOv8 Road Object Detection & Tracking (`Utils/object_det.py`, `Utils/object_tracker.py`):** Real-time detection of cars, trucks, buses, motorcycles, bicycles, and pedestrians using Ultralytics YOLOv8 (PyTorch) with persistent IoU Track IDs and smoothed bounding boxes.
+* **Ego-Lane Filtering & Forward Collision Warning (`Utils/fcw.py`):** Projects object ground contact points into BEV to separate ego-lane lead vehicles from oncoming/adjacent traffic, estimates pinhole distance (m) and Time-to-Collision (TTC), and drives an FCW state machine (`CLEAR`, `CAUTION`, `FCW WARNING`).
+* **Automotive HUD & Telemetry (`Utils/draw.py`, `main.py`):** Unwarped drivable corridor, color-coded object boxes, top-left LKA/LDW/FCW telemetry panel, live top-right Bird's-Eye View inset, MP4 export, `--disable-objects` toggle, and per-frame CSV logging.
 * **Config-Driven & Tested:** Centralized tuning in `config.json`, automated unit tests in `tests/`, and a telemetry analyzer in `scripts/analyze_telemetry.py`.
 
 ---
